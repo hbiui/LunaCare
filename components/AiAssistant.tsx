@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Send, Loader2, Sparkles, Bot, Lightbulb, ChevronRight, MessageSquareHeart } from 'lucide-react';
+import { Send, Loader2, Sparkles, Bot, Lightbulb, ChevronRight, MessageSquareHeart, WifiOff } from 'lucide-react';
 import { getHealthAdviceStream } from '../services/gemini';
 import { PeriodLog, CyclePhase, ChatMessage } from '../types';
 
@@ -16,9 +16,21 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ currentPhase, logs, externalQ
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // 自动滚动到底部
+  // 监听在线状态
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   const scrollToBottom = () => {
     if (scrollRef.current) {
       scrollRef.current.scrollTo({
@@ -66,7 +78,6 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ currentPhase, logs, externalQ
     setChatInput('');
     setIsChatLoading(true);
 
-    // 创建 AI 占位消息用于流式更新
     const aiMsgId = Date.now() + 1;
     setChatHistory(prev => [...prev, {
       role: 'model',
@@ -88,8 +99,7 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ currentPhase, logs, externalQ
   };
 
   const dynamicTags = useMemo(() => {
-    const tags = ["🤒 缓解痛经", "🍲 暖宫食谱", "❌ 经期禁忌", "📖 周期科普", "🍵 喝红糖水有用吗？"];
-    return tags.slice(0, 4);
+    return ["🤒 缓解痛经", "🍲 暖宫食谱", "❌ 经期禁忌", "📖 周期科普", "🍵 红糖水真相"];
   }, [currentPhase]);
 
   return (
@@ -101,15 +111,15 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ currentPhase, logs, externalQ
         >
           <div className="flex items-center gap-4">
             <div className={`p-3 rounded-2xl text-white shadow-lg transition-all transform ${isChatOpen ? 'bg-gradient-to-br from-rose-500 to-pink-500 rotate-6' : 'bg-rose-400'}`}>
-                <Bot size={24} />
+                {isOffline ? <WifiOff size={24} /> : <Bot size={24} />}
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-black text-gray-800 text-sm">男友专属 AI</h3>
-                {!isChatOpen && <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>}
+                <h3 className="font-black text-gray-800 text-sm">{isOffline ? "本地守护模式" : "男友专属 AI"}</h3>
+                {!isChatOpen && <span className={`flex h-2 w-2 rounded-full ${isOffline ? 'bg-amber-400' : 'bg-emerald-500'} animate-pulse`}></span>}
               </div>
               <p className="text-[10px] text-gray-400 font-bold mt-0.5 truncate max-w-[180px]">
-                {isChatOpen ? "实时流式响应已开启" : smartSuggestion}
+                {isChatOpen ? (isOffline ? "已切换至本地智能脑" : "实时流式响应已开启") : smartSuggestion}
               </p>
             </div>
           </div>
@@ -133,7 +143,7 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ currentPhase, logs, externalQ
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <p className="text-gray-400 text-[10px] font-black uppercase tracking-widest">试试这样问我</p>
+                    <p className="text-gray-400 text-[10px] font-black uppercase tracking-widest">{isOffline ? "网络不佳，可直接咨询" : "试试这样问我"}</p>
                     <button 
                       onClick={() => handleSendMessage(smartSuggestion)}
                       className="w-full max-w-xs bg-rose-50/50 p-5 rounded-[2rem] border-2 border-dashed border-rose-100 text-left hover:border-rose-400 hover:bg-rose-50 transition-all group active:scale-95"
@@ -185,7 +195,7 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ currentPhase, logs, externalQ
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                  placeholder="问问 AI：她痛经怎么办？"
+                  placeholder={isOffline ? "本地引擎已准备就绪..." : "问问 AI：她痛经怎么办？"}
                   disabled={isChatLoading}
                   className="flex-1 bg-transparent px-4 py-2 outline-none text-sm font-bold text-gray-700 placeholder:text-gray-300"
                 />
@@ -197,7 +207,9 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ currentPhase, logs, externalQ
                   {isChatLoading ? <Loader2 className="animate-spin" size={20} /> : <Send size={20} />}
                 </button>
               </div>
-              <p className="text-[8px] text-center text-gray-300 font-bold mt-2 uppercase tracking-tighter">Global High-Speed Link Enabled</p>
+              <p className="text-[8px] text-center text-gray-300 font-bold mt-2 uppercase tracking-tighter">
+                {isOffline ? "Local Guard Mode Active" : "Global High-Speed Link Enabled"}
+              </p>
             </div>
           </div>
         )}
