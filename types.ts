@@ -29,12 +29,16 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+export type AiPersona = 'guardian' | 'expert' | 'wit';
+
 export interface AppSettings {
   notificationsEnabled: boolean;
   reminderOffset: 0 | 1; // 0 = same day, 1 = 1 day before
-  postPeriodReminder?: boolean; // New: Reminder after period ends
-  postPeriodDays?: number; // New: How many days after end date (default 3)
-  lastNotifiedDate?: string; // YYYY-MM-DD
+  postPeriodReminder?: boolean; 
+  postPeriodDays?: number; 
+  lastNotifiedDate?: string; 
+  aiPersona?: AiPersona; // AI 智能体人格
+  customApiKey?: string; // 自定义 API Key
 }
 
 export interface CustomSymptom {
