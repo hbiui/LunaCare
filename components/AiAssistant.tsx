@@ -27,7 +27,6 @@ const MoxibustionGuideCard: React.FC = () => {
 
   return (
     <div className="mt-5 mb-4 mx-1 p-0 rounded-[2.8rem] bg-white border border-rose-100 shadow-2xl shadow-rose-200/30 animate-slide-up overflow-hidden group">
-      {/* 顶部标题栏 - 点击可切换折叠状态 */}
       <div 
         className="bg-gradient-to-r from-rose-500 via-pink-500 to-rose-600 p-6 relative overflow-hidden cursor-pointer active:brightness-95 transition-all"
         onClick={() => setIsExpanded(!isExpanded)}
@@ -56,10 +55,8 @@ const MoxibustionGuideCard: React.FC = () => {
         </div>
       </div>
 
-      {/* 折叠内容区 */}
       <div className={`transition-all duration-500 ease-in-out ${isExpanded ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'} overflow-hidden`}>
         <div className="p-7 space-y-8">
-          {/* 核心穴位导图 */}
           <div className="space-y-4">
             <div className="flex items-center gap-2 mb-2">
                 <MapPin size={14} className="text-rose-500" />
@@ -82,7 +79,6 @@ const MoxibustionGuideCard: React.FC = () => {
             </div>
           </div>
 
-          {/* 操作与安全 */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-rose-50/50 p-5 rounded-3xl border border-rose-100/40 relative overflow-hidden">
               <div className="absolute right-0 top-0 p-3 opacity-10"><Thermometer size={40} /></div>
@@ -124,7 +120,8 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ currentPhase, logs, settings,
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isChatLoading, setIsChatLoading] = useState(false);
-  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  // 默认假设在线，只有请求明确失败后才显示离线图标
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [persona, setPersona] = useState(getPersonaConfig(settings.aiPersona));
   const [showPersonaToast, setShowPersonaToast] = useState(false);
   const [detectedIntent, setDetectedIntent] = useState<string | null>(null);
@@ -137,17 +134,6 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ currentPhase, logs, settings,
       hour12: false
     });
   };
-
-  useEffect(() => {
-    const handleOnline = () => setIsOffline(false);
-    const handleOffline = () => setIsOffline(true);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
 
   useEffect(() => {
     const newPersona = getPersonaConfig(settings.aiPersona);
@@ -193,7 +179,6 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ currentPhase, logs, settings,
     const textToSend = textOverride || chatInput;
     if (!textToSend.trim() || isChatLoading) return;
 
-    // 意图识别
     const intentMap: Record<string, string> = {
       '痛': '正在为您匹配缓解痛经的针对性理疗方案...',
       '难受': '正在寻找物理止痛与暖宫建议...',
@@ -223,10 +208,16 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ currentPhase, logs, settings,
           setChatHistory(prev => prev.map(msg => 
             msg.timestamp === aiMsgId ? { ...msg, content: updatedText } : msg
           ));
+          // 如果返回的内容包含离线前缀，说明实际上处于离线回退模式
+          if (updatedText.includes(persona.name === '温情守护者' ? '迷路' : '不可用')) {
+            setIsOfflineMode(true);
+          } else {
+            setIsOfflineMode(false);
+          }
         }
       );
     } catch (err) {
-      setIsOffline(true);
+      setIsOfflineMode(true);
       const localResponse = getLocalSmartResponse(textToSend, currentPhase, settings.aiPersona || 'guardian');
       setChatHistory(prev => prev.map(msg => 
         msg.timestamp === aiMsgId ? { ...msg, content: localResponse } : msg
@@ -265,8 +256,8 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ currentPhase, logs, settings,
         >
           <div className="flex items-center gap-4">
             <div className={`relative p-3.5 rounded-2xl text-white shadow-xl transition-all transform ${isChatOpen ? 'bg-gradient-to-br from-rose-500 to-pink-500 rotate-6' : 'bg-rose-400'}`}>
-                {isOffline ? <WifiOff size={24} /> : <span className="text-xl">{persona.icon}</span>}
-                {!isChatOpen && !isOffline && (
+                {isOfflineMode ? <WifiOff size={24} /> : <span className="text-xl">{persona.icon}</span>}
+                {!isChatOpen && !isOfflineMode && (
                   <span className="absolute -top-1 -right-1 flex h-3 w-3">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500 border border-white"></span>
@@ -275,11 +266,11 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ currentPhase, logs, settings,
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-black text-gray-800 text-[15px]">{isOffline ? "离线守护中" : `AI ${persona.name}`}</h3>
-                {isOffline && <span className="bg-emerald-100 text-emerald-600 text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider">Local</span>}
+                <h3 className="font-black text-gray-800 text-[15px]">{isOfflineMode ? "离线守护中" : `AI ${persona.name}`}</h3>
+                {isOfflineMode && <span className="bg-emerald-100 text-emerald-600 text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider">Local</span>}
               </div>
               <p className="text-[10px] text-gray-400 font-bold mt-1 truncate max-w-[200px]">
-                {isChatOpen ? (isOffline ? "深度差异化离线库已就绪" : "正在基于您的人格偏好生成方案...") : smartSuggestion}
+                {isChatOpen ? (isOfflineMode ? "深度差异化离线库已就绪" : "正在基于您的人格偏好生成方案...") : smartSuggestion}
               </p>
             </div>
           </div>
@@ -343,10 +334,10 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ currentPhase, logs, settings,
                             <CategoryIcon content={msg.content} />
                           </div>
                           <span className="text-[9px] font-black text-rose-400 uppercase tracking-[0.15em]">
-                            {isOffline ? "LOCAL AI" : `${persona.name} · 分析结果`}
+                            {isOfflineMode ? "LOCAL AI" : `${persona.name} · 分析结果`}
                           </span>
                         </div>
-                        {isOffline && <Database size={10} className="text-emerald-400" />}
+                        {isOfflineMode && <Database size={10} className="text-emerald-400" />}
                       </div>
                     )}
 
@@ -395,7 +386,7 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ currentPhase, logs, settings,
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                  placeholder={isOffline ? "寻求具体的缓解方案..." : `向 ${persona.name} 咨询差异化照顾方案...`}
+                  placeholder={isOfflineMode ? "寻求具体的缓解方案..." : `向 ${persona.name} 咨询差异化照顾方案...`}
                   disabled={isChatLoading}
                   className="flex-1 bg-transparent px-5 py-2.5 outline-none text-[15px] font-bold text-gray-700 placeholder:text-gray-300"
                 />

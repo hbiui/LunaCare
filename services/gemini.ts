@@ -27,7 +27,6 @@ const PERSONA_CONFIGS: Record<AiPersona, { name: string; icon: string; instructi
 
 /**
  * 差异化润色引擎 7.0
- * 确保离线模式下，不同人格对相同问题的润色产生质的差异
  */
 const personaTint = (baseAnswer: string, persona: AiPersona, category: string): string => {
   const random = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
@@ -56,7 +55,7 @@ const personaTint = (baseAnswer: string, persona: AiPersona, category: string): 
 };
 
 /**
- * 获取本地智能回复（离线兜底）
+ * 获取本地智能回复
  */
 export const getLocalSmartResponse = (query: string, phase: CyclePhase, persona: AiPersona): string => {
   const normalized = query.trim().toLowerCase();
@@ -79,20 +78,20 @@ export const getHealthAdviceStream = async (
   onChunk: (text: string) => void
 ): Promise<void> => {
   const settings = getSettings();
-  const isOnline = navigator.onLine;
   const persona = settings.aiPersona || 'guardian';
   const provider = settings.aiProvider || 'gemini';
   const config = PERSONA_CONFIGS[persona];
   const apiKey = settings.customApiKey || process.env.API_KEY;
 
-  if (!isOnline || !apiKey) {
+  // 即使 navigator.onLine 返回 false，如果配置了 Key 也尝试请求（因为该 API 有时被误报）
+  if (!apiKey) {
     const cached = getValidAdviceFromCache(currentPhase, userQuery);
     if (cached) { onChunk(cached); return; }
+    onChunk(getLocalSmartResponse(userQuery, currentPhase, persona));
+    return;
   }
 
   try {
-    if (!apiKey) throw new Error("NO_KEY");
-
     const latestLog = recentLogs[0];
     const cycleContext = latestLog 
       ? `周期第 ${Math.ceil(Math.abs(Date.now() - new Date(latestLog.startDate).getTime()) / 86400000)} 天，${currentPhase}。`
@@ -120,7 +119,11 @@ export const getHealthAdviceStream = async (
       const result = await ai.models.generateContentStream({
         model: 'gemini-3-flash-preview',
         contents: prompt,
-        config: { temperature: 1.1, topP: 0.95 }
+        config: { 
+          temperature: 1.1, 
+          topP: 0.95,
+          thinkingConfig: { thinkingBudget: 0 } // 强制禁用思考过程，避免流式输出截断或延迟
+        }
       });
       for await (const chunk of result) {
         if (chunk.text) { 
@@ -133,7 +136,12 @@ export const getHealthAdviceStream = async (
       const model = settings.customModelName || (provider === 'deepseek' ? 'deepseek-chat' : 'glm-4-flash');
       fullText = await fetchOpenAICompatible(baseUrl, apiKey, model, prompt, onChunk);
     }
+    
+    // 成功后存入缓存
+    saveAdviceToCache(fullText, currentPhase, userQuery);
+
   } catch (error) {
+    console.error("AI Assistant Error:", error);
     const finalCached = getValidAdviceFromCache(currentPhase, userQuery);
     onChunk(finalCached || getLocalSmartResponse(userQuery, currentPhase, persona));
   }
@@ -145,15 +153,9 @@ export const getHealthAdvice = async (
   userQuery?: string
 ): Promise<string> => {
   const settings = getSettings();
-  const isOnline = navigator.onLine;
   const persona = settings.aiPersona || 'guardian';
   const config = PERSONA_CONFIGS[persona];
   const apiKey = settings.customApiKey || process.env.API_KEY;
-
-  if (!isOnline || !apiKey) {
-    const cached = getValidAdviceFromCache(currentPhase, userQuery);
-    if (cached) return cached;
-  }
 
   try {
     if (!apiKey) throw new Error("NO_KEY");
@@ -163,10 +165,15 @@ export const getHealthAdvice = async (
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
-      config: { temperature: 1.1 } 
+      config: { 
+        temperature: 1.1,
+        thinkingConfig: { thinkingBudget: 0 }
+      } 
     });
 
-    return response.text || getLocalSmartResponse(userQuery || '', currentPhase, persona);
+    const result = response.text || getLocalSmartResponse(userQuery || '', currentPhase, persona);
+    saveAdviceToCache(result, currentPhase, userQuery);
+    return result;
   } catch (error) {
     const finalCached = getValidAdviceFromCache(currentPhase, userQuery);
     return finalCached || (userQuery ? getLocalSmartResponse(userQuery, currentPhase, persona) : "宝贝，我在你身边。🌸");
@@ -182,15 +189,18 @@ async function fetchOpenAICompatible(baseUrl: string, apiKey: string, model: str
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], stream: !!onChunk, temperature: 1.1 })
+    body: JSON.stringify({ 
+      model, 
+      messages: [{ role: "user", content: prompt }], 
+      stream: !!onChunk, 
+      temperature: 1.1 
+    })
   });
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({}));
     const message = errData.error?.message || `HTTP ${response.status}`;
-    const err = new Error(message) as any;
-    err.status = response.status;
-    throw err;
+    throw new Error(message);
   }
 
   if (onChunk) {
@@ -234,38 +244,21 @@ export const testAiConnection = async (provider: AiProvider, apiKey: string, api
       const baseUrl = apiBase || (provider === 'deepseek' ? 'https://api.deepseek.com/v1' : 'https://open.bigmodel.cn/api/paas/v4');
       const normalizedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
       
-      // 优化方案：优先请求 /models 接口验证 Key 和 Base URL
-      // 这样即使用户模型名写错了，只要 Key 和 URL 对，验证也能通过
-      try {
-        const modelsRes = await fetch(`${normalizedBase}/models`, {
-            headers: { 'Authorization': `Bearer ${apiKey}` }
-        });
+      const modelsRes = await fetch(`${normalizedBase}/models`, {
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+      });
 
-        if (modelsRes.status === 200) {
-            return { success: true, message: `${provider === 'zhipu' ? '智谱' : provider === 'deepseek' ? 'DeepSeek' : 'API'} 身份验证成功！` };
-        } else if (modelsRes.status === 401) {
-            return { success: false, message: "API Key 验证失败 (401)，请检查 Key 是否正确。" };
-        } else if (modelsRes.status === 404) {
-            // 如果 /models 不存在，尝试做一个极简的聊天请求
-            const model = customModel || (provider === 'deepseek' ? 'deepseek-chat' : 'glm-4-flash');
-            await fetchOpenAICompatible(baseUrl, apiKey, model, 'hi');
-            return { success: true, message: "连接成功！" };
-        } else {
-            throw new Error(`服务商返回状态码: ${modelsRes.status}`);
-        }
-      } catch (innerErr: any) {
-          // 如果 fetch 本身失败（如 CORS 或域名错），捕获它
-          if (innerErr.name === 'TypeError' && innerErr.message.includes('fetch')) {
-              return { success: false, message: "网络连接失败，请检查 Base URL 是否正确或是否存在跨域限制。" };
-          }
-          throw innerErr;
+      if (modelsRes.status === 200) {
+          return { success: true, message: `${provider === 'zhipu' ? '智谱' : provider === 'deepseek' ? 'DeepSeek' : 'API'} 身份验证成功！` };
+      } else {
+          const model = customModel || (provider === 'deepseek' ? 'deepseek-chat' : 'glm-4-flash');
+          await fetchOpenAICompatible(baseUrl, apiKey, model, 'hi');
+          return { success: true, message: "连接成功！" };
       }
     }
     throw new Error("未知验证错误");
   } catch (err: any) {
     let msg = err.message || "未知错误";
-    if (msg.includes("API_KEY_INVALID") || msg.includes("invalid api key")) msg = "API Key 格式不正确或已失效。";
-    if (msg.includes("model_not_found") || msg.includes("404")) msg = "连接成功，但指定的模型名称不存在，请检查 Model Name。";
     return { success: false, message: `连接失败: ${msg}` };
   }
 };
